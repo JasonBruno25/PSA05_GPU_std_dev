@@ -205,7 +205,7 @@ sys     0m0.143s
 
 ## Discussion Questions & Answers
 
-## Part 1 - Single Thread Block
+### Part 1 - Single Thread Block
 
 **Q:** Explain how you made your kernel code thread safe and parallel efficient.
 **A:**
@@ -213,31 +213,60 @@ sys     0m0.143s
 - Each thread accumulates into a local variable (`thread_sum`, `thread_sum_diff_sq`) to reduce atomic contention
 - `atomicAdd` safely combines local results into shared variables
 - Three barriers ensure proper ordering: after initialisation, after sum accumulation, and after sum-of-squares accumulation
-- Loop indexing uses `i = thread_num + 1; i <= N; i += num_threads` to flatten the workload evenly across threads.
+- Loop indexing uses `i = thread_num + 1; i <= N; i += num_threads` to flatten the workload evenly across threads
 
-Q: What is the primary limitation of using a single thread block? Explain in terms of GPU hardware (SMs).
-A: A single thread block can only utilise one streaming multiprocessor (SM) at a time. Modern GPUs have many SMs (e.g., 20+), so the rest remain idle. This underutilises the GPU’s parallel capacity, limiting speedup regardless of thread count.
+**Q:** What is the primary limitation of using a single thread block? Explain in terms of GPU hardware (SMs)
+**A:** A single thread block can only utilise one streaming multiprocessor (SM) at a time. Modern GPUs have many SMs (e.g., 20+), so the rest remain idle. This underutilises the GPU’s parallel capacity, limiting speedup regardless of thread count
 
-Part 2 – Multiple Thread Blocks
-Q: Explain how you made your kernel code thread safe and parallel efficient.
+### Part 2 – Multiple Thread Blocks
+
+**Q:** Explain how you made your kernel code thread-safe and parallel efficient.
 A:
+- Each thread processes a contiguous chunk of `T` terms, using `start = thread_num * T` and `end = start + T`.
+- Local accumulators (`thread_sum`, `thread_sum_diff_sq`) are used per thread.
+- `atomicAdd` updates global counters safely.
+- The grid is sized so that nearly all terms are covered (`G = ceil(N / (B*T))`).
+- Separate kernels for sum and sum-of-squares allow reuse of the computed mean.
 
-Each thread processes a contiguous chunk of T terms, using start = thread_num * T and end = start + T.
+**Q:** About how many times faster is version 2 (with T=1000) than version 1 for N = 10 billion?
+**A:** Part 1 real time = 2.842 s, Part 2 real time = 0.614 s → speedup ≈ 4.63×.
 
-Local accumulators (thread_sum, thread_sum_diff_sq) are used per thread.
+**Q:** Why is version 2 slower than version 1 when T = 1, despite using all SMs?
+**A:** With `T = 1`, each thread does almost no work, but the overhead of launching tens of thousands of thread blocks and performing atomic operations for every single element dominates the runtime. The cost of scheduling and synchronising outweighs the benefits of parallelism. Larger `T` amortises this overhead.
 
-atomicAdd updates global counters safely.
+---
 
-The grid is sized so that nearly all terms are covered (G = ceil(N / (B*T))).
+## How to Run
 
-Separate kernels for sum and sum-of-squares allow reuse of the computed mean.
+### 1. Clone the repository:
+  ```bash
+  git clone https://github.com/JasonBruno25/gpu-std-dev.git
+  cd gpu-std-dev
+  ```
+### 2. Compile Part 1:
+  ```bash
+  nvcc -arch=sm_75 -o gpu_std_dev_v1 gpu_std_dev_v1.cu
+  ./gpu_std_dev_v1 1000000000 128
+  ```
 
-Q: About how many times faster is version 2 (with T=1000) than version 1 for N = 10 billion?
-A: Part 1 real time = 2.842 s, Part 2 real time = 0.614 s → speedup ≈ 4.63×.
+### 3. Compile Part 2:
+  ```bash
+  nvcc -arch=sm_75 -o gpu_std_dev_v2 gpu_std_dev_v2.cu
+  ./gpu_std_dev_v2 10000000000 1000 128
+  ```
+> Note: Adjust `-arch` to match your GPU (e.g., `sm_61`, `sm_80`). For Google Colab, `sm_75` works for Tesla T4.
 
-Q: Why is version 2 slower than version 1 when T = 1, despite using all SMs?
-A: With T = 1, each thread does almost no work, but the overhead of launching tens of thousands of thread blocks and performing atomic operations for every single element dominates the runtime. The cost of scheduling and synchronising outweighs the benefits of parallelism. Larger T amortises this overhead.
+---
 
+## Repository Structure
+```text
+gpu-std-dev/
+├── README.md
+├── gpu_std_dev_v1.cu      # Single thread block version
+├── gpu_std_dev_v2.cu      # Multiple thread block version
+└── sequential/            # (Optional) CPU reference
+    └── std_dev.c
+```
 
 
 
