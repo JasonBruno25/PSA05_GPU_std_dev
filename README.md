@@ -112,34 +112,85 @@ __global__ void stdevKernel(uint64 N)
 
 ### Results (Parts 1)
 
-`num_threads = 128`
-> computed std dev is 288675134.6, `sqrt((N^2-1)/12)` is 288675134.6
+```text
+num_threads = 128
+computed std dev is 288675134.6, sqrt((N^2-1)/12) is 288675134.6
 
-| value | results |
-|-----|-----------|
-| real | 0m1.644s |
-| user | 0m1.307s |
-| sys | 0m0.236s |
+real    0m1.644s
+user    0m1.307s
+sys     0m0.236s
+```
 
 N = 10,000,000,000 (10 billion) – overflow occurs due to double precision limits:
-> computed std dev is 484971221.4, sqrt((N^2-1)/12) is 804481180.2
+
+```text
+computed std dev is 484971221.4, sqrt((N^2-1)/12) is 804481180.2
+```
 
 ---
 
 ## Part 2: Multiple Thread Blocks
 
 ### Kernel Implementation (Part 2)
+
 Two kernels are used:
+- `sumKernel` – computes partial sums
+- `sumdiffsqKernel` – computes sum of squared differences
 
-sumKernel – computes partial sums
+Each thread processes `T` consecutive terms (except the last thread which handles the remainder).
 
-sumdiffsqKernel – computes sum of squared differences
+```cpp
+__global__ void sumKernel(uint64 N, uint64 T, uint64* sum)
+{
+    uint64 thread_num = (uint64)blockIdx.x * blockDim.x + threadIdx.x;
+    uint64 thread_sum = 0;
+    uint64 start = thread_num * T;
+    uint64 end = start + T;
+    if (end > N) end = N;
+    for (uint64 i = 1 + start; i <= end; i++)
+        thread_sum += i;
+    atomicAdd(sum, thread_sum);
+}
 
-Each thread processes T consecutive terms (except the last thread which handles the remainder).
+__global__ void sumdiffsqKernel(uint64 N, uint64 T, double mean, double* sum_diff_sq)
+{
+    uint64 thread_num = (uint64)blockIdx.x * blockDim.x + threadIdx.x;
+    double thread_sum_diff_sq = 0.0;
+    uint64 start = thread_num * T;
+    uint64 end = start + T;
+    if (end > N) end = N;
+    for (uint64 i = 1 + start; i <= end; i++)
+        thread_sum_diff_sq += (i - mean) * (i - mean);
+    atomicAdd(sum_diff_sq, thread_sum_diff_sq);
+}
+```
 
+### Main Function and Block/Grid Calculation
 
+The number of thread blocks `G` is computed as:
+  ```cpp
+  int G = (N + (B * T) - 1) / (B * T);
+  ```
+  where:
+  - `N` = total numbers
+  - `T` = terms per thread
+  - `B` = threads per block (multiple of 32, &le; 1024)
 
+### Results (Part 2)
 
+N = 10,000,000,000 (10 billion), T = 1000, B = 128:
+
+```text
+N = 10000000000
+terms per thread T = 1000
+threads per block B = 128
+number of thread blocks G = 78125
+computed std dev is 288675134.6, sqrt((N^2-1)/12) is 288675134.6
+
+real    0m0.614s
+user    0m0.433s
+sys     0m0.143s
+```
 
 
 
