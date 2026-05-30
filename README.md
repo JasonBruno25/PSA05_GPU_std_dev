@@ -192,6 +192,66 @@ user    0m0.433s
 sys     0m0.143s
 ```
 
+### Performance Comparison
+
+|Version | N = 10 billion | T (terms/thread) | Real Time (s) | Speedup vs Part 1 |
+|--------|----------------|------------------|---------------|------------------|
+| Part 1 | 10,000,000,000 | N/A | 2.842 | 1.0x |
+| Part 2 | 10,000,000,000 | 1000 | 0.614 | 4.63x |
+
+> **Note:** Part 2 with `T = 1` is slower than Part 1 because the overhead of launching many threads/atomic operations outweighs the parallelism benefit. Larger `T` increases work per thread and reduces global synchronisation overhead
+
+---
+
+## Discussion Questions & Answers
+
+## Part 1 - Single Thread Block
+
+**Q:** Explain how you made your kernel code thread safe and parallel efficient.
+**A:**
+- Shared memory for `sum` and `sum_diff_sq` is initialised by thread 0 and synchronised with `__syncthreads()`
+- Each thread accumulates into a local variable (`thread_sum`, `thread_sum_diff_sq`) to reduce atomic contention
+- `atomicAdd` safely combines local results into shared variables
+- Three barriers ensure proper ordering: after initialisation, after sum accumulation, and after sum-of-squares accumulation
+- Loop indexing uses `i = thread_num + 1; i <= N; i += num_threads` to flatten the workload evenly across threads.
+
+Q: What is the primary limitation of using a single thread block? Explain in terms of GPU hardware (SMs).
+A: A single thread block can only utilise one streaming multiprocessor (SM) at a time. Modern GPUs have many SMs (e.g., 20+), so the rest remain idle. This underutilises the GPU’s parallel capacity, limiting speedup regardless of thread count.
+
+Part 2 – Multiple Thread Blocks
+Q: Explain how you made your kernel code thread safe and parallel efficient.
+A:
+
+Each thread processes a contiguous chunk of T terms, using start = thread_num * T and end = start + T.
+
+Local accumulators (thread_sum, thread_sum_diff_sq) are used per thread.
+
+atomicAdd updates global counters safely.
+
+The grid is sized so that nearly all terms are covered (G = ceil(N / (B*T))).
+
+Separate kernels for sum and sum-of-squares allow reuse of the computed mean.
+
+Q: About how many times faster is version 2 (with T=1000) than version 1 for N = 10 billion?
+A: Part 1 real time = 2.842 s, Part 2 real time = 0.614 s → speedup ≈ 4.63×.
+
+Q: Why is version 2 slower than version 1 when T = 1, despite using all SMs?
+A: With T = 1, each thread does almost no work, but the overhead of launching tens of thousands of thread blocks and performing atomic operations for every single element dominates the runtime. The cost of scheduling and synchronising outweighs the benefits of parallelism. Larger T amortises this overhead.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
